@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Crawler</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script type="module">
+        import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs';
+        import { pipeline } from 'https://esm.sh/@xenova/transformers';
+
+        async function fetchLinks(url) {
+            const response = await fetch(url);
+            const html = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const links = [];
+            const anchorElements = doc.querySelectorAll('a');
+
+            anchorElements.forEach(element => {
+                const href = element.getAttribute('href');
+                if (href) {
+                    links.push(href);
+                }
+            });
+
+            return links;
+        }
+
+        async function loadModel() {
+            return await pipeline('feature-extraction', 'bert-large-cased');
+        }
+
+        async function encodeText(model, text) {
+            const embeddings = await model(text);
+            return embeddings[0][0];
+        }
+
+        function cosineSimilarity(vecA, vecB) {
+            const dotProduct = tf.tidy(() => tf.dot(vecA, vecB).dataSync()[0]);
+            const magnitudeA = tf.tidy(() => tf.norm(vecA).dataSync()[0]);
+            const magnitudeB = tf.tidy(() => tf.norm(vecB).dataSync()[0]);
+            return dotProduct / (magnitudeA * magnitudeB);
+        }
+
+        async function evaluateLinks(links, searchQuery) {
+            const model = await loadModel();
+            const searchQueryEmbedding = await encodeText(model, searchQuery);
+
+            const linkEvaluations = await Promise.all(links.map(async (link) => {
+                try {
+                    const response = await fetch(link);
+                    const html = await response.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const pageText = doc.body.innerText;
+                    const pageEmbedding = await encodeText(model, pageText);
+                    const similarity = cosineSimilarity(searchQueryEmbedding, pageEmbedding);
+                    return { link, similarity };
+                } catch (error) {
+                    return { link, similarity: -1 };
+                }
+            }));
+
+            return linkEvaluations.sort((a, b) => b.similarity - a.similarity);
+        }
+
+        async function crawl(query, urls) {
+            const urlArray = urls.split(',');
+
+            const allLinks = [];
+
+            for (const url of urlArray) {
+                const links = await fetchLinks(url);
+                allLinks.push(...links);
+            }
+
+            const uniqueLinks = [...new Set(allLinks)];
+            const rankedLinks = await evaluateLinks(uniqueLinks, query);
+
+            console.log(rankedLinks);
+        }
+
+        // مثال على الاستدعاء
+        const query = "example search query";
+        const urls = "https://example.com";
+        crawl(query, urls);
+    </script>
+</head>
+<body>
+</body>
+</html>
